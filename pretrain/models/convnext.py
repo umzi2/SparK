@@ -12,6 +12,9 @@ import torch.nn as nn
 from timm.models.layers import trunc_normal_
 from timm.models.registry import register_model
 
+# from pretrain.encoder import SparseConvNeXtLayerNorm, SparseConvNeXtBlock
+
+
 from encoder import SparseConvNeXtBlock, SparseConvNeXtLayerNorm
 
 
@@ -103,6 +106,8 @@ class ConvNeXt(nn.Module):
 @register_model
 def convnext_tiny(pretrained=False, in_22k=False, **kwargs):
     model = ConvNeXt(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
+    state = torch.load("/home/umzi/PycharmProjects/SparK/pretrain/your_exp_dir/convnext_tiny_1kpretrained_timm_styleb.pth")
+    model.load_state_dict(state)
     return model
 
 

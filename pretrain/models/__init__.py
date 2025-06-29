@@ -37,6 +37,7 @@ pretrain_default_model_kwargs = {
     'resnet101': dict(drop_path_rate=0.08),
     'resnet152': dict(drop_path_rate=0.10),
     'resnet200': dict(drop_path_rate=0.15),
+    'convnext_tiny': dict(sparse=True, drop_path_rate=0.1),
     'convnext_small': dict(sparse=True, drop_path_rate=0.2),
     'convnext_base': dict(sparse=True, drop_path_rate=0.3),
     'convnext_large': dict(sparse=True, drop_path_rate=0.4),

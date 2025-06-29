@@ -79,7 +79,7 @@ class SparseConvNeXtLayerNorm(nn.LayerNorm):
                     nc = super(SparseConvNeXtLayerNorm, self).forward(nc)
     
                     x = torch.zeros_like(x)
-                    x[ii] = nc
+                    x[ii] = nc.to(x.dtype)
                     return x
                 else:
                     return super(SparseConvNeXtLayerNorm, self).forward(x)
@@ -91,7 +91,7 @@ class SparseConvNeXtLayerNorm(nn.LayerNorm):
                     nc = super(SparseConvNeXtLayerNorm, self).forward(nc)
                 
                     x = torch.zeros_like(bhwc)
-                    x[ii] = nc
+                    x[ii] = nc.to(x.dtype)
                     return x.permute(0, 3, 1, 2)
                 else:
                     u = x.mean(1, keepdim=True)
@@ -108,7 +108,27 @@ class SparseConvNeXtLayerNorm(nn.LayerNorm):
     def __repr__(self):
         return super(SparseConvNeXtLayerNorm, self).__repr__()[:-1] + f', ch={self.data_format.split("_")[-1]}, sp={self.sparse})'
 
+class InceptionDWConv2d(nn.Module):
+    """ Inception depthweise convolution
+    """
 
+    def __init__(self, in_channels, square_kernel_size=3, band_kernel_size=11, branch_ratio=0.125):
+        super().__init__()
+
+        gc = int(in_channels * branch_ratio)  # channel numbers of a convolution branch
+        self.dwconv_hw = nn.Conv2d(gc, gc, square_kernel_size, padding=square_kernel_size // 2, groups=gc)
+        self.dwconv_w = nn.Conv2d(gc, gc, kernel_size=(1, band_kernel_size), padding=(0, band_kernel_size // 2),
+                                  groups=gc)
+        self.dwconv_h = nn.Conv2d(gc, gc, kernel_size=(band_kernel_size, 1), padding=(band_kernel_size // 2, 0),
+                                  groups=gc)
+        self.split_indexes = (in_channels - 3 * gc, gc, gc, gc)
+
+    def forward(self, x):
+        x_id, x_hw, x_w, x_h = torch.split(x, self.split_indexes, dim=1)
+        return torch.cat(
+            (x_id, self.dwconv_hw(x_hw), self.dwconv_w(x_w), self.dwconv_h(x_h)),
+            dim=1,
+        )
 class SparseConvNeXtBlock(nn.Module):
     r""" ConvNeXt Block. There are two equivalent implementations:
     (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv -> GELU -> 1x1 Conv; all in (N, C, H, W)
@@ -123,7 +143,7 @@ class SparseConvNeXtBlock(nn.Module):
     
     def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6, sparse=True, ks=7):
         super().__init__()
-        self.dwconv = nn.Conv2d(dim, dim, kernel_size=ks, padding=ks//2, groups=dim)  # depthwise conv
+        self.dwconv = InceptionDWConv2d(dim)  # depthwise conv
         self.norm = SparseConvNeXtLayerNorm(dim, eps=1e-6, sparse=sparse)
         self.pwconv1 = nn.Linear(dim, 4 * dim)  # pointwise/1x1 convs, implemented with linear layers
         self.act = nn.GELU()
