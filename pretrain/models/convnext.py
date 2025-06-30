@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 # This file is basically a copy of: https://github.com/facebookresearch/ConvNeXt/blob/06f7b05f922e21914916406141f50f82b4a15852/models/convnext.py
+import os
 from typing import List
 
 import torch
@@ -130,7 +131,8 @@ class ConvNeXt(nn.Module):
 @register_model
 def convnext_tiny(pretrained=False, in_22k=False, **kwargs):
     model = ConvNeXt(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
-    state = torch.load("/home/umzi/PycharmProjects/SparK_fork/pretrain/your_exp_dir/convnext_tiny_1kpretrained_timm_style.pth")
+    # print(os.listdir("."))
+    state = torch.load("convnext_tiny_1kpretrained_timm_style.pth")
     print(model.load_state_dict(state,strict=False))
     return model
 
