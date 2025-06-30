@@ -4,3 +4,8 @@ Pillow
 typed-argument-parser
 timm==0.5.4
 tensorboardx
+tensorboard
+pytz
+pyvips-binary>=8.16.0
+pyvips>=2.2.3
+chainner-ext

@@ -129,6 +129,27 @@ class InceptionDWConv2d(nn.Module):
             (x_id, self.dwconv_hw(x_hw), self.dwconv_w(x_w), self.dwconv_h(x_h)),
             dim=1,
         )
+
+class ConvMlp(nn.Module):
+    """ MLP using 1x1 convs that keeps spatial dims
+    copied from timm: https://github.com/huggingface/pytorch-image-models/blob/v0.6.11/timm/models/layers/mlp.py
+    """
+    def __init__(
+            self, in_features, hidden_features=None, out_features=None, act_layer=nn.ReLU,
+            norm_layer=None, bias=True, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+
+        self.fc1 = nn.Conv2d(in_features, hidden_features, kernel_size=1, bias=True)
+        self.act = nn.GELU()
+        self.fc2 = nn.Conv2d(hidden_features, out_features, kernel_size=1, bias=True)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.fc2(x)
+        return x
 class SparseConvNeXtBlock(nn.Module):
     r""" ConvNeXt Block. There are two equivalent implementations:
     (1) DwConv -> LayerNorm (channels_first) -> 1x1 Conv -> GELU -> 1x1 Conv; all in (N, C, H, W)
@@ -141,13 +162,14 @@ class SparseConvNeXtBlock(nn.Module):
         layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
     """
     
-    def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6, sparse=True, ks=7):
+    def __init__(self, dim, drop_path=0., layer_scale_init_value=1e-6, sparse=True, ks=7,mlp=4):
         super().__init__()
-        self.dwconv = InceptionDWConv2d(dim)  # depthwise conv
-        self.norm = SparseConvNeXtLayerNorm(dim, eps=1e-6, sparse=sparse)
-        self.pwconv1 = nn.Linear(dim, 4 * dim)  # pointwise/1x1 convs, implemented with linear layers
-        self.act = nn.GELU()
-        self.pwconv2 = nn.Linear(4 * dim, dim)
+        self.token_mixer = InceptionDWConv2d(dim)  # depthwise conv
+        self.norm = SparseBatchNorm2d(dim)
+        # self.pwconv1 = nn.Conv2d(dim, 4 * dim,1)  # pointwise/1x1 convs, implemented with linear layers
+        # self.act = nn.GELU()
+        # self.pwconv2 = nn.Conv2d(4 * dim, dim,1)
+        self.mlp = ConvMlp(dim, dim*mlp)
         self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
                                   requires_grad=True) if layer_scale_init_value > 0 else None
         self.drop_path: nn.Module = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -155,15 +177,11 @@ class SparseConvNeXtBlock(nn.Module):
     
     def forward(self, x):
         input = x
-        x = self.dwconv(x)
-        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        x = self.token_mixer(x)
         x = self.norm(x)
-        x = self.pwconv1(x)
-        x = self.act(x)            # GELU(0) == (0), so there is no need to mask x (no need to `x *= _get_active_ex_or_ii`)
-        x = self.pwconv2(x)
+        x = self.mlp(x)
         if self.gamma is not None:
-            x = self.gamma * x
-        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+            x = self.gamma[None,...,None,None] * x
         
         if self.sparse:
             x *= _get_active_ex_or_ii(H=x.shape[2], W=x.shape[3], returning_active_ex=True)

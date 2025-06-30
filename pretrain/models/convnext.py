@@ -15,9 +15,41 @@ from timm.models.registry import register_model
 # from pretrain.encoder import SparseConvNeXtLayerNorm, SparseConvNeXtBlock
 
 
-from encoder import SparseConvNeXtBlock, SparseConvNeXtLayerNorm
+from encoder import SparseConvNeXtBlock, SparseBatchNorm2d
 
+class MetaNeXtStage(nn.Module):
+    def __init__(
+            self,
+            in_chs,
+            out_chs,
+            ds_stride=2,
+            depth=2,
+            drop_path_rates=None,
+            mlp = 4
+    ):
+        super().__init__()
+        self.grad_checkpointing = False
+        if ds_stride > 1:
+            self.downsample = nn.Sequential(
+                SparseBatchNorm2d(in_chs),
+                nn.Conv2d(in_chs, out_chs, kernel_size=ds_stride, stride=ds_stride),
+            )
+        else:
+            self.downsample = nn.Identity()
 
+        drop_path_rates = drop_path_rates or [0.] * depth
+        stage_blocks = []
+        for i in range(depth):
+            stage_blocks.append(SparseConvNeXtBlock(
+                dim=out_chs,
+                drop_path=drop_path_rates[i],
+                mlp=mlp,
+            ))
+        self.blocks = nn.Sequential(*stage_blocks)
+
+    def forward(self, x):
+        x = self.downsample(x)
+        return self.blocks(x)
 class ConvNeXt(nn.Module):
     r""" ConvNeXt
         A PyTorch impl of : `A ConvNet for the 2020s`  -
@@ -32,43 +64,35 @@ class ConvNeXt(nn.Module):
         head_init_scale (float): Init scaling value for classifier weights and biases. Default: 1.
     """
     
-    def __init__(self, in_chans=3, num_classes=1000,
+    def __init__(self, in_chans=3, num_classes=0,
                  depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], drop_path_rate=0.,
-                 layer_scale_init_value=1e-6, head_init_scale=1., global_pool='avg',
+                 layer_scale_init_value=1e-6,mlp =(4, 4, 4, 3), head_init_scale=1., global_pool='avg',
                  sparse=True,
                  ):
         super().__init__()
         self.dims: List[int] = dims
-        self.downsample_layers = nn.ModuleList()  # stem and 3 intermediate downsampling conv layers
-        stem = nn.Sequential(
+        # self.downsample_layers = nn.ModuleList()  # stem and 3 intermediate downsampling conv layers
+        self.stem = nn.Sequential(
             nn.Conv2d(in_chans, dims[0], kernel_size=4, stride=4),
-            SparseConvNeXtLayerNorm(dims[0], eps=1e-6, data_format="channels_first", sparse=sparse)
+            SparseBatchNorm2d(dims[0])
         )
-        self.downsample_layers.append(stem)
-        for i in range(3):
-            downsample_layer = nn.Sequential(
-                SparseConvNeXtLayerNorm(dims[i], eps=1e-6, data_format="channels_first", sparse=sparse),
-                nn.Conv2d(dims[i], dims[i + 1], kernel_size=2, stride=2),
-            )
-            self.downsample_layers.append(downsample_layer)
-        
         self.stages = nn.ModuleList()  # 4 feature resolution stages, each consisting of multiple residual blocks
         self.drop_path_rate = drop_path_rate
         self.layer_scale_init_value = layer_scale_init_value
-        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
+        dp_rates = [x.tolist() for x in torch.linspace(0, drop_path_rate, sum(depths)).split(depths)]
         cur = 0
+        prev_chs = dims[0]
         for i in range(4):
-            stage = nn.Sequential(
-                *[SparseConvNeXtBlock(dim=dims[i], drop_path=dp_rates[cur + j],
-                                      layer_scale_init_value=layer_scale_init_value, sparse=sparse) for j in range(depths[i])]
-            )
+            out_chs = dims[i]
+            stage = MetaNeXtStage(in_chs=prev_chs,out_chs=out_chs,depth=depths[i], ds_stride = 1 if i ==0 else 2, drop_path_rates=dp_rates[i],mlp = mlp[i])
             self.stages.append(stage)
             cur += depths[i]
+            prev_chs = out_chs
         self.depths = depths
         
         self.apply(self._init_weights)
         if num_classes > 0:
-            self.norm = SparseConvNeXtLayerNorm(dims[-1], eps=1e-6, sparse=False)  # final norm layer for LE/FT; should not be sparse
+            self.norm = SparseBatchNorm2d(dims[-1])  # final norm layer for LE/FT; should not be sparse
             self.fc = nn.Linear(dims[-1], num_classes)
         else:
             self.norm = nn.Identity()
@@ -86,15 +110,15 @@ class ConvNeXt(nn.Module):
         return self.dims
     
     def forward(self, x, hierarchical=False):
-        if hierarchical:
-            ls = []
-            for i in range(4):
-                x = self.downsample_layers[i](x)
-                x = self.stages[i](x)
-                ls.append(x)
-            return ls
-        else:
-            return self.fc(self.norm(x.mean([-2, -1]))) # (B, C, H, W) =mean=> (B, C) =norm&fc=> (B, NumCls)
+        # if hierarchical:
+        ls = []
+        x = self.stem(x)
+        for i in range(4):
+            x = self.stages[i](x)
+            ls.append(x)
+        return ls
+        # else:
+        #     return self.fc(self.norm(x.mean([-2, -1]))) # (B, C, H, W) =mean=> (B, C) =norm&fc=> (B, NumCls)
     
     def get_classifier(self):
         return self.fc
@@ -106,8 +130,8 @@ class ConvNeXt(nn.Module):
 @register_model
 def convnext_tiny(pretrained=False, in_22k=False, **kwargs):
     model = ConvNeXt(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
-    state = torch.load("/home/umzi/PycharmProjects/SparK/pretrain/your_exp_dir/convnext_tiny_1kpretrained_timm_styleb.pth")
-    model.load_state_dict(state)
+    state = torch.load("/home/umzi/PycharmProjects/SparK_fork/pretrain/your_exp_dir/convnext_tiny_1kpretrained_timm_style.pth")
+    print(model.load_state_dict(state,strict=False))
     return model
 
 

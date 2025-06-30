@@ -33,7 +33,7 @@ class SparK(nn.Module):
         
         self.sbn = sbn
         self.hierarchy = len(sparse_encoder.enc_feat_map_chs)
-        self.densify_norm_str = densify_norm.lower()
+        self.densify_norm_str = 'ln'.lower()
         self.densify_norms = nn.ModuleList()
         self.densify_projs = nn.ModuleList()
         self.mask_tokens = nn.ParameterList()

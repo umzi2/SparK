@@ -35,13 +35,13 @@ class Args(Tap):
     
     # pre-training hyperparameters
     dp: float = 0.0
-    base_lr: float = 2e-4
+    base_lr: float = 1e-3
     wd: float = 0.04
     wde: float = 0.2
     ep: int = 1600
     wp_ep: int = 40
     clip: int = 5.
-    opt: str = 'lamb'
+    opt: str = 'adamw'
     ada: float = 0.
     
     # NO NEED TO SPECIFIED; each of these args would be updated in runtime automatically
@@ -126,10 +126,10 @@ def init_dist_and_get_args():
     
     if args.is_convnext:
         args.ada = args.ada or 0.999
-        args.densify_norm = 'ln'
+        args.densify_norm = 'bn'
     
     args.opt = args.opt.lower()
-    args.lr = args.base_lr * args.glb_batch_size / 256
+    args.lr = args.base_lr * args.glb_batch_size / 1024
     args.wde = args.wde or args.wd
     
     return args
