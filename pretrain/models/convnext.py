@@ -132,7 +132,11 @@ class ConvNeXt(nn.Module):
 def convnext_tiny(pretrained=False, in_22k=False, **kwargs):
     model = ConvNeXt(depths=[3, 3, 9, 3], dims=[96, 192, 384, 768], **kwargs)
     # print(os.listdir("."))
-    state = torch.load("convnext_tiny_1kpretrained_timm_style.pth")
+    state = torch.hub.load_state_dict_from_url(
+        url="https://github.com/umzi2/SparK/releases/download/weight/convnext_tiny_1kpretrained_timm_style.pth",
+        map_location="cpu",
+        weights_only=True,
+    )
     print(model.load_state_dict(state,strict=False))
     return model
 
